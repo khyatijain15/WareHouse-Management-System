@@ -1,0 +1,57 @@
+'use client';
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useMemo } from "react";
+import { useAUM } from "@/lib/firestore";
+
+const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D"];
+
+export function DistributionChart() {
+  const distributionData = [
+    { date: 'Jan', Active: 25, Inactive: 8, Pending: 12 },
+    { date: 'Feb', Active: 28, Inactive: 7, Pending: 10 },
+    { date: 'Mar', Active: 30, Inactive: 6, Pending: 9 },
+    { date: 'Apr', Active: 32, Inactive: 5, Pending: 8 },
+    { date: 'May', Active: 35, Inactive: 4, Pending: 7 },
+    { date: 'Jun', Active: 38, Inactive: 3, Pending: 6 }
+  ];
+
+  const locations = Object.keys(distributionData[0]).filter(key => key !== 'date');
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="inline-block w-fit border-b-2 border-green-500 pb-2">Warehouse Status</CardTitle>
+      </CardHeader>
+      <CardContent className="h-[400px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart
+            data={distributionData}
+            margin={{
+              top: 20,
+              right: 30,
+              left: 20,
+              bottom: 5,
+            }}
+          >
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis dataKey="date" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            {locations.map((location, index) => (
+              <Line
+                key={location}
+                type="monotone"
+                dataKey={location}
+                stroke={COLORS[index % COLORS.length]}
+                activeDot={{ r: 8 }}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </CardContent>
+    </Card>
+  );
+}

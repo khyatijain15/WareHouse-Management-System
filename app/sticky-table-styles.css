@@ -1,0 +1,47 @@
+/* Sticky header styles for reports tables */
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #fed7aa; /* bg-orange-100 equivalent */
+}
+
+.sticky-header th {
+  position: sticky;
+  top: 0;
+  background-color: #fed7aa; /* bg-orange-100 equivalent */
+  z-index: 10;
+}
+
+/* Sticky first column styles */
+.sticky-first-column {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #ffffff; /* white background for data cells */
+  box-shadow: 2px 0 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+.sticky-first-column.header {
+  background-color: #fed7aa; /* bg-orange-100 equivalent for header */
+  z-index: 15; /* Higher z-index for header intersection */
+  box-shadow: 2px 2px 4px 0 rgba(0, 0, 0, 0.15);
+}
+
+/* Ensure the table container allows for proper sticky positioning */
+.table-container {
+  max-height: 70vh;
+  overflow: auto; /* Enable both horizontal and vertical scrolling */
+  border: 1px solid #e5e7eb; /* border-gray-200 equivalent */
+  position: relative;
+}
+
+/* Override any conflicting styles */
+.sticky-header th {
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* Special styling for the intersection of sticky header and sticky column */
+.sticky-header .sticky-first-column {
+  z-index: 20; /* Highest z-index for the intersection */
+}

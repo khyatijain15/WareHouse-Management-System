@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Blinking animations for insurance alerts */
+@keyframes blink-red {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes blink-orange {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.3;
+  }
+}
+
+.blinking-red {
+  animation: blink-red 1s infinite;
+}
+
+.blinking-orange {
+  animation: blink-orange 1s infinite;
+}
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 255, 255, 255;
+  --background-end-rgb: 255, 255, 255;
+}
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 142 76% 36%;
+    --card: 0 0% 100%;
+    --card-foreground: 142 76% 36%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 142 76% 36%;
+    --primary: 24 95% 65%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 142 76% 36%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 142 76% 36%;
+    --accent: 24 95% 65%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 24 95% 65%;
+    --chart-1: 24 95% 65%;
+    --chart-2: 142 76% 36%;
+    --chart-3: 24 95% 65%;
+    --chart-4: 142 76% 36%;
+    --chart-5: 24 95% 65%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-primary;
+  }
+  p, span, div {
+    @apply text-secondary;
+  }
+}
+
+.blinking-red {
+  animation: blink 1s steps(2, start) infinite;
+}
+.blinking-orange {
+  animation: blink 1s steps(2, start) infinite;
+}
+@keyframes blink {
+  to { visibility: hidden; }
+}
+
+/* Sticky header styles for reports tables */
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: #fed7aa; /* bg-orange-100 equivalent */
+}
+
+.sticky-header th {
+  position: sticky;
+  top: 0;
+  background-color: #fed7aa !important; /* bg-orange-100 equivalent */
+  z-index: 10;
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* Sticky first column styles */
+.sticky-first-column {
+  position: sticky;
+  left: 0;
+  z-index: 5;
+  background-color: #ffffff; /* white background for data cells */
+  box-shadow: 2px 0 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+.sticky-first-column.header {
+  background-color: #fed7aa; /* bg-orange-100 equivalent for header */
+  z-index: 15; /* Higher z-index for header intersection */
+  box-shadow: 2px 2px 4px 0 rgba(0, 0, 0, 0.15);
+}
+
+/* Ensure the table container allows for proper sticky positioning */
+.table-container {
+  max-height: 70vh;
+  overflow: auto; /* Enable both horizontal and vertical scrolling */
+  border: 1px solid #e5e7eb; /* border-gray-200 equivalent */
+  position: relative;
+}
+
+.table-container table {
+  position: relative;
+}
+
+.table-container thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.table-container thead th {
+  position: sticky;
+  top: 0;
+  background-color: #fed7aa !important; /* bg-orange-100 equivalent */
+  z-index: 11;
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* Override any conflicting styles */
+.sticky-header th {
+  box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* Special styling for the intersection of sticky header and sticky column */
+.sticky-header .sticky-first-column {
+  z-index: 20; /* Highest z-index for the intersection */
+}

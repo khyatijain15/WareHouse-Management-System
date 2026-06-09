@@ -1,0 +1,934 @@
+"use client";
+
+import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import DashboardLayout from '@/components/dashboard-layout';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Search, Download, Plus } from 'lucide-react';
+import React from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, query, where, addDoc, updateDoc } from 'firebase/firestore';
+import { uploadToCloudinary } from '@/lib/cloudinary';
+
+import { DataTable } from '@/components/data-table';
+
+export default function DeliveryOrderPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+  
+  // Extract user role from user object
+  const userRole = user?.role || 'admin'; // Default to admin if user or role is undefined
+  
+  // Log user role to debug
+  React.useEffect(() => {
+    console.log('Current user:', user);
+    console.log('Current userRole:', userRole);
+  }, [user, userRole]);
+  
+  // Placeholder state for search
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const [showAddModal, setShowAddModal] = React.useState(false);
+  const [roOptions, setRoOptions] = React.useState<any[]>([]);
+  const [roSearch, setRoSearch] = React.useState('');
+  const [selectedRO, setSelectedRO] = React.useState<any>(null);
+  const [doBags, setDoBags] = React.useState('');
+  const [doQty, setDoQty] = React.useState('');
+  const [fileAttachments, setFileAttachments] = React.useState<File[]>([]);
+  const [isUploading, setIsUploading] = React.useState(false);
+  const [formError, setFormError] = React.useState<string | null>(null);
+  const [submitSuccess, setSubmitSuccess] = React.useState(false);
+  const [currentBalanceBags, setCurrentBalanceBags] = React.useState<number | null>(null);
+  const [currentBalanceQty, setCurrentBalanceQty] = React.useState<number | null>(null);
+  const [deliveryOrders, setDeliveryOrders] = React.useState<any[]>([]);
+  const [showDODetails, setShowDODetails] = React.useState(false);
+  const [selectedDO, setSelectedDO] = React.useState<any>(null);
+  const [remark, setRemark] = React.useState('');
+  const [doStatusUpdating, setDOStatusUpdating] = React.useState(false);
+
+  // Fetch all deliveryOrders for the table
+  React.useEffect(() => {
+    const fetchDOs = async () => {
+      const doCol = collection(db, 'deliveryOrders');
+      const snap = await getDocs(doCol);
+      let data = snap.docs.map((doc: any, idx: number) => {
+        const d = doc.data();
+        // Ensure doCode and doStatus
+        return {
+          id: doc.id,
+          ...d,
+          doCode: d.doCode || `DO-${String(idx + 1).padStart(4, '0')}`,
+          doStatus: d.doStatus || 'pending',
+        };
+      });
+      // Sort by doCode descending (latest first)
+      data.sort((a: any, b: any) => (b.doCode || '').localeCompare(a.doCode || ''));
+      setDeliveryOrders(data);
+    };
+    fetchDOs();
+  }, [submitSuccess, doStatusUpdating]);
+
+  // Helper to get balance from DB if not present in row
+  const getBalanceBags = (row: any) => {
+    if (typeof row.balanceBags === 'number') return row.balanceBags;
+    if (row.balanceBags && !isNaN(Number(row.balanceBags))) return Number(row.balanceBags);
+    if (typeof row.totalBags === 'number' && typeof row.doBags === 'number') {
+      return row.totalBags - row.doBags;
+    }
+    return '';
+  };
+  
+  const getBalanceQty = (row: any) => {
+    if (typeof row.balanceQuantity === 'number') return row.balanceQuantity;
+    if (row.balanceQuantity && !isNaN(Number(row.balanceQuantity))) return Number(row.balanceQuantity);
+    if (typeof row.totalQuantity === 'number' && typeof row.doQuantity === 'number') {
+      return row.totalQuantity - row.doQuantity;
+    }
+    return '';
+  };
+
+  // Group deliveryOrders by srwrNo, show only latest per group
+  const [expandedRows, setExpandedRows] = React.useState<{ [key: string]: boolean }>({});
+  const groupedDOs: { [key: string]: any[] } = {};
+  deliveryOrders.forEach(ro => {
+    if (!groupedDOs[ro.srwrNo]) groupedDOs[ro.srwrNo] = [];
+    groupedDOs[ro.srwrNo].push(ro);
+  });
+  // Sort each group by createdAt descending
+  Object.values(groupedDOs).forEach(group => group.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
+  // Only show latest per group in main table
+  const latestDOs = Object.values(groupedDOs).map(group => group[0]);
+
+  // Columns for main table
+  const doColumns = [
+    {
+      accessorKey: 'expand',
+      header: '',
+      cell: ({ row }: any) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setExpandedRows(prev => ({ ...prev, [row.original.srwrNo]: !prev[row.original.srwrNo] }));
+          }}
+        >
+          {expandedRows[row.original.srwrNo] ? '▼' : '▶'}
+        </Button>
+      ),
+    },
+    { accessorKey: 'doCode', header: 'DO Code', cell: ({ row }: any) => <div>{row.original.doCode || ''}</div> },
+    { accessorKey: 'srwrNo', header: 'SR/WR No.', cell: ({ row }: any) => <div style={{ minWidth: 180 }}>{row.original.srwrNo}</div> },
+    { accessorKey: 'state', header: 'State' },
+    { accessorKey: 'branch', header: 'Branch' },
+    { accessorKey: 'warehouseName', header: 'Warehouse Name' },
+    { accessorKey: 'warehouseCode', header: 'Warehouse Code' },
+    { accessorKey: 'warehouseAddress', header: 'Warehouse Address' },
+    { accessorKey: 'clientCode', header: 'Client Code' },
+    { accessorKey: 'clientAddress', header: 'Client Address' },
+    { accessorKey: 'totalBags', header: 'Inward Bags' },
+    { accessorKey: 'totalQuantity', header: 'Inward Quantity' },
+    { accessorKey: 'releaseBags', header: 'Release RO Bags' },
+    { accessorKey: 'releaseQuantity', header: 'Release RO Quantity' },
+    { accessorKey: 'doBags', header: 'DO Bags', cell: ({ row }: any) => <div>{row.original.doBags || ''}</div> },
+    { accessorKey: 'doQuantity', header: 'DO Quantity', cell: ({ row }: any) => <div>{row.original.doQuantity || ''}</div> },
+    { accessorKey: 'balanceBags', header: 'Balance Bags', cell: ({ row }: any) => <div>{getBalanceBags(row.original)}</div> },
+    { accessorKey: 'balanceQuantity', header: 'Balance Quantity', cell: ({ row }: any) => <div>{getBalanceQty(row.original)}</div> },
+    { accessorKey: 'doStatus', header: 'DO Status', cell: ({ row }: any) => (
+      <Button variant="link" className="text-blue-600 underline p-0" onClick={() => { setSelectedDO(row.original); setShowDODetails(true); }}>{row.original.doStatus || 'pending'}</Button>
+    ) },
+  ];
+
+  // Placeholder handler for export
+  const handleExportCSV = () => {
+    // TODO: Implement export logic
+    alert('Export CSV functionality coming soon!');
+  };
+
+  // Fetch approved RO entries for dropdown
+  React.useEffect(() => {
+    const fetchROs = async () => {
+      const roCol = collection(db, 'releaseOrders');
+      const q = query(roCol, where('roStatus', '==', 'approved'));
+      const snap = await getDocs(q);
+      const roData: any[] = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setRoOptions(roData);
+    };
+    fetchROs();
+  }, []);
+
+  // Filtered options for dropdown
+  const filteredROOptions = React.useMemo(() => {
+    if (!roSearch) return roOptions;
+    return roOptions.filter(opt => {
+      const srwr = `${opt.srwrNo || ''}`.toLowerCase();
+      return srwr.includes(roSearch.toLowerCase());
+    });
+  }, [roOptions, roSearch]);
+
+  // When RO is selected, update form fields
+  React.useEffect(() => {
+    const updateFormFields = () => {
+      if (!selectedRO) {
+        setCurrentBalanceBags(null);
+        setCurrentBalanceQty(null);
+        return;
+      }
+      setCurrentBalanceBags(Number(selectedRO.balanceBags) || 0);
+      setCurrentBalanceQty(Number(selectedRO.balanceQuantity) || 0);
+    };
+    updateFormFields();
+  }, [selectedRO]);
+
+  // Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+
+    if (!selectedRO) {
+      setFormError('Please select an RO');
+      return;
+    }
+
+    // Validate DO bags and quantity
+    const dbBags = Number(doBags);
+    const dQuantity = Number(doQty);
+    const balanceBags = currentBalanceBags || 0;
+    const balanceQty = currentBalanceQty || 0;
+
+    if (isNaN(dbBags) || dbBags <= 0) {
+      setFormError('Please enter valid number of bags');
+      return;
+    }
+    if (isNaN(dQuantity) || dQuantity <= 0) {
+      setFormError('Please enter valid quantity');
+      return;
+    }
+    if (dbBags > balanceBags) {
+      setFormError(`Cannot release more than available balance bags (${balanceBags})`);
+      return;
+    }
+    if (dQuantity > balanceQty) {
+      setFormError(`Cannot release more than available balance quantity (${balanceQty})`);
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      let attachmentUrls: string[] = [];
+      let hasUploadErrors = false;
+
+      // Upload attachments if any
+      if (fileAttachments.length > 0) {
+        for (const file of fileAttachments) {
+          try {
+            console.log(`Uploading file: ${file.name}, type: ${file.type}, size: ${file.size}`);
+            const result = await uploadToCloudinary(file);
+            if (result && result.secure_url) {
+              console.log(`Upload successful: ${result.secure_url}`);
+              attachmentUrls.push(result.secure_url);
+            }
+          } catch (uploadError) {
+            hasUploadErrors = true;
+            console.error(`Error uploading file ${file.name}:`, uploadError);
+            // Continue with next file even if this one fails
+          }
+        }
+        
+        // Show warning if some uploads failed
+        if (hasUploadErrors && attachmentUrls.length < fileAttachments.length) {
+          alert(`Some files failed to upload. ${attachmentUrls.length} of ${fileAttachments.length} were successful.`);
+        }
+      }
+
+      // Prepare DO data
+      const newBalanceBags = balanceBags - dbBags;
+      const newBalanceQty = balanceQty - dQuantity;
+
+      // Get next DO code number
+      const doCol = collection(db, 'deliveryOrders');
+      const doSnap = await getDocs(doCol);
+      const doCount = doSnap.size;
+      const newDOCode = `DO-${String(doCount + 1).padStart(4, '0')}`;
+
+      // Create new DO record
+      const doData = {
+        doCode: newDOCode,
+        srwrNo: selectedRO.srwrNo,
+        cadNumber: selectedRO.cadNumber,
+        state: selectedRO.state,
+        branch: selectedRO.branch,
+        location: selectedRO.location,
+        warehouseName: selectedRO.warehouseName,
+        warehouseCode: selectedRO.warehouseCode,
+        warehouseAddress: selectedRO.warehouseAddress,
+        client: selectedRO.client,
+        clientCode: selectedRO.clientCode,
+        clientAddress: selectedRO.clientAddress,
+        totalBags: selectedRO.totalBags,
+        totalQuantity: selectedRO.totalQuantity,
+        releaseBags: selectedRO.releaseBags,
+        releaseQuantity: selectedRO.releaseQuantity,
+        doBags: dbBags,
+        doQuantity: dQuantity,
+        balanceBags: newBalanceBags,
+        balanceQuantity: newBalanceQty,
+        attachmentUrls,
+        remark: remark,
+        doStatus: 'pending',
+        createdAt: new Date().toISOString(),
+        createdBy: userRole // Already has a default value
+      };
+
+      await addDoc(collection(db, 'deliveryOrders'), doData);
+      
+      setSubmitSuccess(true);
+      setIsUploading(false);
+      setShowAddModal(false);
+      setSelectedRO(null);
+      setDoBags('');
+      setDoQty('');
+      setFileAttachments([]);
+      setRemark('');
+
+      // Reset success flag after a delay
+      setTimeout(() => {
+        setSubmitSuccess(false);
+      }, 3000);
+    } catch (error: any) {
+      console.error('Error submitting DO:', error);
+      // Display a more specific error message if available
+      if (error?.message?.includes('Cloudinary')) {
+        setFormError(`File upload error: ${error.message}. Please try again with different files or formats.`);
+      } else {
+        setFormError(`An error occurred: ${error?.message || 'Unknown error'}. Please try again.`);
+      }
+      setIsUploading(false);
+    }
+  };
+
+  // Handle DO status change
+  const handleDOStatusChange = async (newStatus: string) => {
+    if (!selectedDO) return;
+    
+    try {
+      setDOStatusUpdating(true);
+      
+      // Update the status in Firestore
+      const deliveryOrdersCol = collection(db, 'deliveryOrders');
+      const q = query(deliveryOrdersCol, where('doCode', '==', selectedDO.doCode));
+      const snap = await getDocs(q);
+      
+      if (!snap.empty) {
+        const docRef = snap.docs[0].ref;
+        await updateDoc(docRef, { 
+          doStatus: newStatus,
+          statusUpdatedAt: new Date().toISOString(),
+          statusUpdatedBy: userRole, // Already has a default value
+          statusRemark: remark || '' // Ensure remark is not undefined
+        });
+      }
+      
+      setShowDODetails(false);
+      setSelectedDO(null);
+      setRemark('');
+      setDOStatusUpdating(false);
+    } catch (error) {
+      console.error('Error updating DO status:', error);
+      setDOStatusUpdating(false);
+    }
+  };
+
+  return (
+    <DashboardLayout>
+      <div className="p-6">
+        <div className="flex justify-between items-center mb-6">
+          <Button onClick={() => router.push('/dashboard')} variant="ghost" className="flex items-center">
+            ← Dashboard
+          </Button>
+          <h1 className="text-2xl font-bold text-orange-600 text-center flex-1">Delivery Order</h1>
+          <Button onClick={() => setShowAddModal(true)} className="bg-green-600 hover:bg-green-700">
+            <Plus className="h-4 w-4 mr-2" /> Add DO
+          </Button>
+        </div>
+
+        {/* Search and Export */}
+        <div className="bg-green-50 rounded-lg p-4 mb-6">
+          <div className="text-lg font-semibold text-green-800 mb-3">Search & Export Options</div>
+          <div className="flex justify-between items-center">
+            <div className="relative w-80 flex items-center">
+              <span className="mr-2 text-gray-600">Search:</span>
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
+                <Input
+                  type="search"
+                  placeholder="Search by DO fields..."
+                  className="pl-8"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+            </div>
+            <Button onClick={handleExportCSV} className="bg-blue-500 hover:bg-blue-600 text-white">
+              <Download className="h-4 w-4 mr-2" /> Export CSV
+            </Button>
+          </div>
+        </div>
+
+        {/* Main Table */}
+        <div className="bg-white rounded-lg shadow-md">
+          <div className="py-3 px-4 bg-green-50 border-b border-green-100">
+            <h2 className="text-green-700 text-xl font-semibold">Delivery Orders</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-[1400px] border text-sm w-full">
+              <thead className="bg-orange-100">
+                <tr>
+                  <th className="px-2 py-1 border"></th>
+                  <th className="px-2 py-1 border">DO Code</th>
+                  <th className="px-2 py-1 border">SR/WR No.</th>
+                  <th className="px-2 py-1 border">State</th>
+                  <th className="px-2 py-1 border">Branch</th>
+                  <th className="px-2 py-1 border">Warehouse Name</th>
+                  <th className="px-2 py-1 border">Warehouse Code</th>
+                  <th className="px-2 py-1 border">Warehouse Address</th>
+                  <th className="px-2 py-1 border">Client Code</th>
+                  <th className="px-2 py-1 border">Client Address</th>
+                  <th className="px-2 py-1 border">Inward Bags</th>
+                  <th className="px-2 py-1 border">Inward Quantity</th>
+                  <th className="px-2 py-1 border">Release RO Bags</th>
+                  <th className="px-2 py-1 border">Release RO Quantity</th>
+                  <th className="px-2 py-1 border">DO Bags</th>
+                  <th className="px-2 py-1 border">DO Quantity</th>
+                  <th className="px-2 py-1 border">Balance Bags</th>
+                  <th className="px-2 py-1 border">Balance Quantity</th>
+                  <th className="px-2 py-1 border">DO Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {latestDOs.map(do_item => (
+                  <React.Fragment key={do_item.doCode}>
+                    <tr className="even:bg-gray-50">
+                      <td className="px-2 py-1 border">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="p-1"
+                          onClick={() => {
+                            setExpandedRows(prev => ({ ...prev, [do_item.srwrNo]: !prev[do_item.srwrNo] }));
+                          }}
+                        >
+                          {expandedRows[do_item.srwrNo] ? '▼' : '▶'}
+                        </Button>
+                      </td>
+                      <td className="px-2 py-1 border">{do_item.doCode || ''}</td>
+                      <td className="px-2 py-1 border" style={{ minWidth: '180px' }}>{do_item.srwrNo}</td>
+                      <td className="px-2 py-1 border">{do_item.state}</td>
+                      <td className="px-2 py-1 border">{do_item.branch}</td>
+                      <td className="px-2 py-1 border">{do_item.warehouseName}</td>
+                      <td className="px-2 py-1 border">{do_item.warehouseCode}</td>
+                      <td className="px-2 py-1 border">{do_item.warehouseAddress}</td>
+                      <td className="px-2 py-1 border">{do_item.clientCode}</td>
+                      <td className="px-2 py-1 border">{do_item.clientAddress}</td>
+                      <td className="px-2 py-1 border">{do_item.totalBags}</td>
+                      <td className="px-2 py-1 border">{do_item.totalQuantity}</td>
+                      <td className="px-2 py-1 border">{do_item.releaseBags}</td>
+                      <td className="px-2 py-1 border">{do_item.releaseQuantity}</td>
+                      <td className="px-2 py-1 border">{do_item.doBags || ''}</td>
+                      <td className="px-2 py-1 border">{do_item.doQuantity || ''}</td>
+                      <td className="px-2 py-1 border">{getBalanceBags(do_item)}</td>
+                      <td className="px-2 py-1 border">{getBalanceQty(do_item)}</td>
+                      <td className="px-2 py-1 border">
+                        <Button 
+                          variant="link" 
+                          className="text-blue-600 underline p-0" 
+                          onClick={() => { setSelectedDO(do_item); setShowDODetails(true); }}
+                        >
+                          {do_item.doStatus || 'pending'}
+                        </Button>
+                      </td>
+                    </tr>
+                    {expandedRows[do_item.srwrNo] && groupedDOs[do_item.srwrNo] && groupedDOs[do_item.srwrNo].length > 0 && (
+                      <tr>
+                        <td colSpan={19} className="p-0">
+                          <div className="bg-gray-50 p-4">
+                            <div className="text-sm font-medium mb-2">Previous Delivery Orders for this SR/WR</div>
+                            <div className="overflow-x-auto">
+                              <table className="w-full border text-xs">
+                                <thead className="bg-gray-100">
+                                  <tr>
+                                    <th className="px-2 py-1 border">Date</th>
+                                    <th className="px-2 py-1 border">DO Code</th>
+                                    <th className="px-2 py-1 border">DO Bags</th>
+                                    <th className="px-2 py-1 border">DO Qty</th>
+                                    <th className="px-2 py-1 border">Balance Bags</th>
+                                    <th className="px-2 py-1 border">Balance Qty</th>
+                                    <th className="px-2 py-1 border">DO Status</th>
+                                    <th className="px-2 py-1 border">Attachment</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {groupedDOs[do_item.srwrNo].map((entry, idx) => (
+                                    <tr key={entry.doCode || idx} className="even:bg-gray-100">
+                                      <td className="px-2 py-1 border text-center">{entry.createdAt ? new Date(entry.createdAt).toLocaleDateString('en-GB') : ''}</td>
+                                      <td className="px-2 py-1 border text-center">{entry.doCode}</td>
+                                      <td className="px-2 py-1 border text-center">{entry.doBags}</td>
+                                      <td className="px-2 py-1 border text-center">{entry.doQuantity}</td>
+                                      <td className="px-2 py-1 border text-center">{entry.balanceBags}</td>
+                                      <td className="px-2 py-1 border text-center">{entry.balanceQuantity}</td>
+                                      <td className="px-2 py-1 border text-center">
+                                        <div className="flex items-center justify-center gap-2">
+                                          <span>{entry.doStatus || 'pending'}</span>
+                                          <Button variant="ghost" size="sm" className="p-1" title="View Details" onClick={() => { setSelectedDO(entry); setShowDODetails(true); }}>
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-4 h-4 text-blue-600">
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.75-7.5 9.75-7.5 9.75 7.5 9.75 7.5-3.75 7.5-9.75 7.5S2.25 12 2.25 12z" />
+                                              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15a3 3 0 100-6 3 3 0 000 6z" />
+                                            </svg>
+                                          </Button>
+                                        </div>
+                                      </td>
+                                      <td className="px-2 py-1 border text-center">
+                                        {Array.isArray(entry.attachmentUrls) && entry.attachmentUrls.length > 0 ? 
+                                          <a href={entry.attachmentUrls[0]} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">View</a> : 
+                                          <span className="text-gray-400">No file</span>
+                                        }
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Add DO Dialog */}
+        <Dialog open={showAddModal} onOpenChange={setShowAddModal}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-xl text-center text-orange-600 font-bold">DELIVERY ORDER (DO)</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="overflow-y-auto pr-1">
+              {formError && <div className="bg-red-100 p-3 mb-4 text-red-600 rounded-md text-center font-medium">{formError}</div>}
+              
+              <div className="space-y-5 pt-4">
+                {/* RO Selection */}
+                <div className="bg-green-50 p-4 rounded-md border border-green-200">
+                  <Label htmlFor="ro-select" className="text-green-800 font-semibold text-lg mb-2 block">Select Release Order (RO)</Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="Search by SR/WR No"
+                      value={roSearch}
+                      onChange={(e) => setRoSearch(e.target.value)}
+                      className="mb-2"
+                    />
+                    <Select
+                      value={selectedRO?.id || ''}
+                      onValueChange={(value) => {
+                        const selected = roOptions.find(ro => ro.id === value);
+                        setSelectedRO(selected || null);
+                      }}
+                    >
+                      <SelectTrigger id="ro-select" className="bg-white">
+                        <SelectValue placeholder="Select RO" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {filteredROOptions.map(ro => (
+                          <SelectItem key={ro.id} value={ro.id}>
+                            {ro.srwrNo} - {ro.roCode}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Auto-populated Fields */}
+                {selectedRO && (
+                  <div className="grid grid-cols-2 gap-6 p-4 bg-green-50 rounded-md border border-green-200">
+                    <div>
+                      <Label className="text-green-800 font-medium">CAD NUMBER</Label>
+                      <Input value={selectedRO.cadNumber || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">STATE</Label>
+                      <Input value={selectedRO.state || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">BRANCH</Label>
+                      <Input value={selectedRO.branch || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">LOCATION</Label>
+                      <Input value={selectedRO.location || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">WAREHOUSE NAME</Label>
+                      <Input value={selectedRO.warehouseName || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">WAREHOUSE CODE</Label>
+                      <Input value={selectedRO.warehouseCode || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-green-800 font-medium">WAREHOUSE ADDRESS</Label>
+                      <Input value={selectedRO.warehouseAddress || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">CLIENT NAME</Label>
+                      <Input value={selectedRO.client || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">CLIENT CODE</Label>
+                      <Input value={selectedRO.clientCode || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div className="col-span-2">
+                      <Label className="text-green-800 font-medium">CLIENT ADDRESS</Label>
+                      <Input value={selectedRO.clientAddress || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    
+                    <div>
+                      <Label className="text-green-800 font-medium">INWARD BAGS</Label>
+                      <Input value={selectedRO.totalBags || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">INWARD QUANTITY (MT)</Label>
+                      <Input value={selectedRO.totalQuantity || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">RELEASE RO BAGS</Label>
+                      <Input value={selectedRO.releaseBags || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">RELEASE RO QUANTITY (MT)</Label>
+                      <Input value={selectedRO.releaseQuantity || ''} readOnly className="bg-white border-green-100" />
+                    </div>
+
+                    {/* Input fields */}
+                    <div>
+                      <Label htmlFor="doBags" className="text-orange-600 font-medium">DO BAGS</Label>
+                      <Input
+                        id="doBags"
+                        type="number"
+                        value={doBags}
+                        onChange={(e) => setDoBags(e.target.value)}
+                        required
+                        className="bg-white border-orange-200"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="doQty" className="text-orange-600 font-medium">DO QUANTITY (MT)</Label>
+                      <Input
+                        id="doQty"
+                        type="number"
+                        step="0.01"
+                        value={doQty}
+                        onChange={(e) => setDoQty(e.target.value)}
+                        required
+                        className="bg-white border-orange-200"
+                      />
+                    </div>
+
+                    {/* Auto calculated balance fields */}
+                    <div>
+                      <Label className="text-green-800 font-medium">BALANCE BAGS</Label>
+                      <Input 
+                        value={currentBalanceBags !== null && doBags ? 
+                          Math.max(0, Number(currentBalanceBags) - Number(doBags || 0)).toString() : 
+                          currentBalanceBags?.toString() || ''} 
+                        readOnly 
+                        className="bg-green-50 border-green-100"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-green-800 font-medium">BALANCE QUANTITY (MT)</Label>
+                      <Input 
+                        value={currentBalanceQty !== null && doQty ? 
+                          Math.max(0, Number(currentBalanceQty) - Number(doQty || 0)).toFixed(2) : 
+                          currentBalanceQty?.toString() || ''} 
+                        readOnly 
+                        className="bg-green-50 border-green-100"
+                      />
+                    </div>
+
+                    {/* Attachment */}
+                    <div className="col-span-2">
+                      <Label htmlFor="attachment" className="text-green-800 font-medium">ATTACHMENT (ALL FILE TYPES ALLOWED)</Label>
+                      <Input
+                        id="attachment"
+                        type="file"
+                        className="cursor-pointer bg-white border-green-100"
+                        onChange={(e) => {
+                          if (e.target.files) {
+                            const filesArray = Array.from(e.target.files);
+                            setFileAttachments([...fileAttachments, ...filesArray]);
+                            // Reset the input to allow selecting the same file again
+                            e.target.value = '';
+                          }
+                        }}
+                        multiple
+                      />
+                      {fileAttachments.length > 0 && (
+                        <div className="mt-3 bg-green-50 p-3 rounded-md border border-green-100">
+                          <Label className="text-green-800 font-medium mb-2 block">Selected Files:</Label>
+                          <div className="space-y-2">
+                            {fileAttachments.map((file, idx) => (
+                              <div key={idx} className="flex items-center justify-between bg-white p-2 rounded border border-green-100">
+                                <span className="text-sm truncate">{file.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 text-red-500"
+                                  onClick={() => {
+                                    const newFiles = [...fileAttachments];
+                                    newFiles.splice(idx, 1);
+                                    setFileAttachments(newFiles);
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Remark */}
+                    <div className="col-span-2">
+                      <Label htmlFor="remark" className="text-green-800 font-medium">REMARK</Label>
+                      <Input
+                        id="remark"
+                        value={remark}
+                        onChange={(e) => setRemark(e.target.value)}
+                        placeholder="Enter remarks..."
+                        className="bg-white border-green-100"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="mt-8 pt-4 border-t border-green-100">
+                <Button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white px-6" disabled={isUploading}>
+                  {isUploading ? 'Submitting...' : 'SUBMIT'}
+                </Button>
+                <DialogClose asChild>
+                  <Button type="button" variant="outline" className="border-green-200 text-green-800 hover:bg-green-50">Cancel</Button>
+                </DialogClose>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        {/* DO Details Dialog */}
+        <Dialog open={showDODetails} onOpenChange={setShowDODetails}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader className="border-b border-green-100 pb-4">
+              <DialogTitle className="text-xl font-bold text-center text-orange-600">Delivery Order Details</DialogTitle>
+            </DialogHeader>
+            {selectedDO && (
+              <form id="do-details-form" className="max-h-[80vh] overflow-y-auto p-2">
+                {/* CIR-style header */}
+                <div style={{ textAlign: 'center', marginBottom: 8 }}>
+                  <img src="/Group 86.png" alt="Agrogreen Logo" style={{ width: 90, height: 90, borderRadius: '50%', margin: '0 auto 8px' }} />
+                  <div style={{ fontSize: 28, fontWeight: 700, color: '#e67c1f', letterSpacing: 0.5, marginBottom: 2 }}>AGROGREEN WAREHOUSING PRIVATE LTD.</div>
+                  <div style={{ fontSize: 18, fontWeight: 500, color: '#1aad4b', marginBottom: 8 }}>603, 6th Floor, Princess Business Skyline, Indore, Madhya Pradesh - 452010</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: '#e67c1f', margin: '24px 0 0 0', textDecoration: 'underline' }}>DO Details</div>
+                </div>
+                {/* Two-column grid for fields */}
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '0 32px',
+                    marginTop: 32,
+                  }}
+                >
+                  {/* All fields except attachments */}
+                  {[
+                    { label: 'DO Code', value: selectedDO.doCode },
+                    { label: 'Status', value: selectedDO.doStatus },
+                    { label: 'SR/WR No.', value: selectedDO.srwrNo },
+                    { label: 'CAD Number', value: selectedDO.cadNumber },
+                    { label: 'State', value: selectedDO.state },
+                    { label: 'Branch', value: selectedDO.branch },
+                    { label: 'Location', value: selectedDO.location },
+                    { label: 'Warehouse Name', value: selectedDO.warehouseName },
+                    { label: 'Warehouse Code', value: selectedDO.warehouseCode },
+                    { label: 'Warehouse Address', value: selectedDO.warehouseAddress },
+                    { label: 'Client Name', value: selectedDO.client },
+                    { label: 'Client Code', value: selectedDO.clientCode },
+                    { label: 'Client Address', value: selectedDO.clientAddress },
+                    { label: 'Inward Bags', value: selectedDO.totalBags },
+                    { label: 'Inward Quantity', value: selectedDO.totalQuantity },
+                    { label: 'Release RO Bags', value: selectedDO.releaseBags },
+                    { label: 'Release RO Quantity', value: selectedDO.releaseQuantity },
+                    { label: 'DO Bags', value: selectedDO.doBags },
+                    { label: 'DO Quantity', value: selectedDO.doQuantity },
+                    { label: 'Balance Bags', value: getBalanceBags(selectedDO) },
+                    { label: 'Balance Quantity', value: getBalanceQty(selectedDO) },
+                    { label: 'Remark', value: selectedDO.remark },
+                  ].map((f, idx) => (
+                    <div key={idx} style={{ marginBottom: 12 }}>
+                      <div style={{ fontWeight: 700, color: '#1aad4b', fontSize: 16, marginBottom: 4, marginTop: 12, letterSpacing: 0.2 }}>{f.label}</div>
+                      <div style={{ fontWeight: 500, color: '#222', fontSize: 16, marginBottom: 8, background: '#f6fef9', borderRadius: 8, padding: '6px 12px', border: '1px solid #e0f2e9' }}>{f.value ?? '-'}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* Attachments row below grid */}
+                <div style={{ marginTop: 24 }}>
+                  <div style={{ fontWeight: 700, color: '#1aad4b', fontSize: 16, marginBottom: 4, marginTop: 12, letterSpacing: 0.2 }}>Attachment</div>
+                  {Array.isArray(selectedDO.attachmentUrls) && selectedDO.attachmentUrls.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {selectedDO.attachmentUrls.map((url: string, idx: number) => {
+                        const ext = url.split('.').pop()?.toLowerCase();
+                        let label = 'View File';
+                        if (ext === 'pdf') label = 'View PDF';
+                        else if (ext === 'docx') label = 'View DOCX';
+                        else if (["jpg", "jpeg", "png"].includes(ext || '')) label = 'View Image';
+                        return (
+                          <a key={idx} href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#1a56db', textDecoration: 'underline', fontSize: 15 }}>
+                            {label} {idx + 1}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <span style={{ color: '#888', fontSize: 15 }}>No file</span>
+                  )}
+                </div>
+                {/* Generate Receipt Button (only if approved) */}
+                {selectedDO.doStatus === 'approved' && (
+                  <div className="flex justify-end mt-2">
+                    <Button type="button" className="bg-orange-600 hover:bg-orange-700 text-white" onClick={async () => {
+                      try {
+                        // Import required libraries
+                        const html2canvas = (await import('html2canvas')).default;
+                        const jsPDF = (await import('jspdf')).default;
+                        const ReactDOMClient = (await import('react-dom/client')).default;
+                        
+                        // Import PrintableDOReceipt component dynamically to avoid SSR issues
+                        const PrintableDOReceipt = (await import('../../components/PrintableDOReceipt')).default;
+                        
+                        // Create a proper React element with the receipt component
+                        const receiptElement = document.createElement('div');
+                        receiptElement.id = "temp-pdf-container";
+                        receiptElement.style.width = '100%';
+                        receiptElement.style.position = 'absolute';
+                        receiptElement.style.top = '-9999px';
+                        receiptElement.style.left = '-9999px';
+                        receiptElement.style.zIndex = '-1000';
+                        receiptElement.style.overflow = 'hidden';
+                        document.body.appendChild(receiptElement);
+                        
+                        // Create root and render component
+                        const root = ReactDOMClient.createRoot(receiptElement);
+                        root.render(<PrintableDOReceipt data={selectedDO} />);
+                        
+                        // Add a small delay for rendering
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        // Get the rendered receipt
+                        const printableReceipt = document.getElementById('printable-do-receipt');
+                        if (!printableReceipt) {
+                          throw new Error("Could not find printable receipt element");
+                        }
+                        
+                        // Create canvas with higher scale for better quality
+                        const canvas = await html2canvas(printableReceipt, { 
+                          scale: 2, 
+                          useCORS: true, 
+                          backgroundColor: '#fff',
+                          logging: false,
+                          allowTaint: true
+                        });
+                        
+                        // Create PDF with proper dimensions
+                        const pdf = new jsPDF('p', 'mm', 'a4');
+                        const pageWidth = pdf.internal.pageSize.getWidth();
+                        const pageHeight = pdf.internal.pageSize.getHeight();
+                        
+                        // Calculate image dimensions to fit page width
+                        const imgWidth = pageWidth;
+                        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+                        
+                        // Split across multiple pages if needed
+                        let heightLeft = imgHeight;
+                        let position = 0;
+                        let pageCount = 0;
+                        
+                        while (heightLeft > 0) {
+                          // Add image to page
+                          pdf.addImage(
+                            canvas.toDataURL('image/jpeg', 1.0),
+                            'JPEG',
+                            0,
+                            position,
+                            imgWidth,
+                            imgHeight,
+                            `page-${pageCount}`,
+                            'FAST'
+                          );
+                          
+                          heightLeft -= pageHeight;
+                          position -= pageHeight;
+                          
+                          // Add new page if there's more content
+                          if (heightLeft > 0) {
+                            pdf.addPage();
+                            pageCount++;
+                          }
+                        }
+                        
+                        // Save PDF
+                        pdf.save(`delivery-order-receipt-${selectedDO.doCode || ''}.pdf`);
+                        
+                        // Clean up - remove the temporary element
+                        const tempContainer = document.getElementById("temp-pdf-container");
+                        if (tempContainer) {
+                          document.body.removeChild(tempContainer);
+                        }
+                        
+                        alert("PDF generated successfully!");
+                      } catch (error: any) {
+                        console.error("PDF generation error:", error);
+                        alert(`Error generating PDF: ${error?.message || 'Unknown error'}`);
+                      }
+                    }}>
+                      Generate Receipt
+                    </Button>
+                  </div>
+                )}
+                
+                {/* Previous DO entries table removed for PDF generation */}
+                
+                <div className="mt-6 pt-4 border-t border-green-200">
+                  <Label className="text-green-800 font-medium">Update Status with Remark</Label>
+                  <Input value={remark} onChange={e => setRemark(e.target.value)} placeholder="Enter remark..." className="mt-2 border-green-100" />
+                  <div className="flex gap-4 mt-4 justify-end">
+                    <Button type="button" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => handleDOStatusChange('approved')} disabled={doStatusUpdating}>Approve</Button>
+                    <Button type="button" className="bg-red-600 hover:bg-red-700 text-white" onClick={() => handleDOStatusChange('rejected')} disabled={doStatusUpdating}>Reject</Button>
+                    <Button type="button" className="bg-orange-500 hover:bg-orange-600 text-white" onClick={() => handleDOStatusChange('resubmitted')} disabled={doStatusUpdating}>Resubmit</Button>
+                  </div>
+                </div>
+              </form>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    </DashboardLayout>
+  );
+}
